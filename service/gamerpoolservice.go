@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -66,30 +67,34 @@ func NewGPService() GPService {
 	return GPService{Gp: gp, Gg: gg, dbStore: dbStore}
 }
 
-func (gp *GPService) GetGroups() groups.GamersGroups {
+func (gp *GPService) GetGroups() []*groups.Group {
+	return gp.Gg.GetGroups()
+}
+
+func (gp *GPService) ResetGroups() []*groups.Group {
 	if config.storeInDB {
 		err := gp.GetGamersFromDB()
 		if err != nil {
 			log.Printf("Ошибка чтения из базы данных: %s", err)
 		}
-		gp.Gg.RecalculateGroups(gp.Gp.GetPoolCopy())
-	} else {
-		gp.Gg.CalculateGroups(gp.Gp.GetPoolCopy())
 	}
-	return groups.GamersGroups{Groups: gp.Gg.Groups}
-}
-
-func (gp *GPService) ResetGroups() groups.GamersGroups {
 	gp.Gg.RecalculateGroups(gp.Gp.GetPoolCopy())
-	return groups.GamersGroups{Groups: gp.Gg.Groups}
+	return gp.Gg.GetGroups()
 }
 
-func (gp *GPService) AddGamer(gamer gamer.Gamer) {
-	gp.Gp.Add(gamer)
-	if config.storeInDB {
-		g, _ := gp.Gp.Get(gamer.Name)
-		gp.dbStore.AddGamer(*g)
+func (gp *GPService) AddGamer(gamer gamer.Gamer) error {
+	_, err := gp.Gp.Get(gamer.Name)
+	if err != nil {
+		gp.Gp.Add(gamer)
+		if config.storeInDB {
+			g, _ := gp.Gp.Get(gamer.Name)
+			gp.dbStore.AddGamer(*g)
+		}
+		gp.Gg.AddToQueue(gamer)
+		gp.Gg.CalculateGroups()
+		return nil
 	}
+	return fmt.Errorf("игрок с именем %s уже существует", gamer.Name)
 }
 
 func (gp *GPService) DeleteGamer(gamer gamer.Gamer) {

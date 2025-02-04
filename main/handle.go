@@ -16,7 +16,6 @@ import (
 
 var (
 	gpservice service.GPService
-	storeInDB bool
 )
 
 func main() {
@@ -24,6 +23,7 @@ func main() {
 	var err error
 
 	gpservice = service.NewGPService()
+	gpservice.ResetGroups()
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -38,11 +38,11 @@ func main() {
 	addr := fmt.Sprintf("%s:%s", host, port)
 
 	router := mux.NewRouter()
-	router.HandleFunc("/gamer", handlePostGamerRequest).Methods("POST")
+	router.HandleFunc("/users", handlePostGamerRequest).Methods("POST")
 	router.HandleFunc("/groups", handleGetGroupsRequest).Methods("GET")
 	router.HandleFunc("/groups/reset", handleGetResetGroupsRequest).Methods("GET")
 	router.HandleFunc("/groups/{number}", handleGetStatistics).Methods("GET")
-	router.HandleFunc("/gamer/{name}", handleDeleteGamerRequest).Methods("DELETE")
+	router.HandleFunc("/user/{name}", handleDeleteGamerRequest).Methods("DELETE")
 
 	log.Printf("Запуск сервера на %s\n", addr)
 	err = http.ListenAndServe(addr, router)
@@ -65,16 +65,21 @@ func handlePostGamerRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Fprintf(w, "Полученные данные: %s\n", string(data))
 	g.ConTime = time.Now()
-	gpservice.AddGamer(g)
-
+	err = gpservice.AddGamer(g)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, err)
+		log.Print(err)
+		return
+	}
+	fmt.Fprintf(w, string(data))
 }
 
 func handleGetGroupsRequest(w http.ResponseWriter, r *http.Request) {
 	log.Print("Входящий запрос GET groups")
 	groups := gpservice.GetGroups()
-	v, err := json.Marshal(groups.Groups)
+	v, err := json.Marshal(groups)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprint(w, err)
@@ -88,7 +93,7 @@ func handleGetGroupsRequest(w http.ResponseWriter, r *http.Request) {
 func handleGetResetGroupsRequest(w http.ResponseWriter, r *http.Request) {
 	log.Print("Входящий запрос GET reset groups")
 	groups := gpservice.ResetGroups()
-	v, err := json.Marshal(groups.Groups)
+	v, err := json.Marshal(groups)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprint(w, err)
@@ -118,6 +123,8 @@ func handleGetStatistics(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 		return
 	}
+
+	log.Println(string(v))
 
 	fmt.Fprintf(w, string(v))
 }

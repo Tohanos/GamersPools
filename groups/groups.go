@@ -2,6 +2,7 @@ package groups
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"game.com/pool/gamer"
@@ -14,7 +15,10 @@ type Group struct {
 }
 
 type GamersGroups struct {
-	Groups []*Group `json:"groups"`
+	Groups      []*Group
+	queue       map[string]*gamer.Gamer
+	queueMutex  sync.RWMutex
+	groupsMutex sync.Mutex
 }
 
 type GroupStatistics struct {
@@ -33,33 +37,43 @@ type GroupStatistics struct {
 
 var (
 	maxGroupSize int
-	queue        map[string]*gamer.Gamer
 )
 
 func NewGamersGroups(maxSize int) *GamersGroups {
-
 	maxGroupSize = maxSize
 	gg := make([]*Group, 0, 1)
-	return &GamersGroups{gg}
+	return &GamersGroups{Groups: gg, queue: make(map[string]*gamer.Gamer), queueMutex: sync.RWMutex{}, groupsMutex: sync.Mutex{}}
 }
 
 func initQueue(gamers map[string]*gamer.Gamer) map[string]*gamer.Gamer {
-	queue = make(map[string]*gamer.Gamer)
+	queue := make(map[string]*gamer.Gamer)
 	for k, v := range gamers {
 		queue[k] = v
 	}
 	return queue
 }
 
-func (gg *GamersGroups) CalculateGroups(gm map[string]*gamer.Gamer) {
-	for len(queue) >= maxGroupSize {
+func (gg *GamersGroups) AddToQueue(gamer gamer.Gamer) {
+	gg.queueMutex.Lock()
+	defer gg.queueMutex.Unlock()
+
+	gg.queue[gamer.Name] = &gamer
+}
+
+func (gg *GamersGroups) CalculateGroups() {
+	gg.queueMutex.RLock()
+	defer gg.queueMutex.RUnlock()
+	gg.groupsMutex.Lock()
+	defer gg.groupsMutex.Unlock()
+
+	for len(gg.queue) >= maxGroupSize {
 		gamers := make(map[string]*gamer.Gamer)
 		for i := 0; i < maxGroupSize; i++ {
 			minSkillDiff := math.MaxFloat64
 			minLatencyDiff := math.MaxFloat64
 			var gamerFit *gamer.Gamer
 
-			for _, gamer := range queue {
+			for _, gamer := range gg.queue {
 				if gamerFit == nil {
 					gamerFit = gamer
 				}
@@ -72,9 +86,8 @@ func (gg *GamersGroups) CalculateGroups(gm map[string]*gamer.Gamer) {
 				}
 			}
 			gamers[gamerFit.Name] = gamerFit
-			delete(queue, gamerFit.Name)
+			delete(gg.queue, gamerFit.Name)
 		}
-
 		gg.Groups = append(gg.Groups, &Group{Gamers: gamers, FormTime: time.Now()})
 	}
 
@@ -84,9 +97,15 @@ func (gg *GamersGroups) CalculateGroups(gm map[string]*gamer.Gamer) {
 }
 
 func (gg *GamersGroups) RecalculateGroups(gm map[string]*gamer.Gamer) {
-	queue = initQueue(gm)
+	gg.queueMutex.Lock()
+	gg.queue = initQueue(gm)
+	gg.queueMutex.Unlock()
+
+	gg.groupsMutex.Lock()
 	gg.Groups = make([]*Group, 0, 1)
-	gg.CalculateGroups(gm)
+	gg.groupsMutex.Unlock()
+
+	gg.CalculateGroups()
 }
 
 func abs(x float64) float64 {
@@ -96,7 +115,15 @@ func abs(x float64) float64 {
 	return x
 }
 
+func (gg *GamersGroups) GetGroups() []*Group {
+	gg.groupsMutex.Lock()
+	defer gg.groupsMutex.Unlock()
+	return gg.Groups
+}
+
 func (gg *GamersGroups) CalculateGroupStats(number int) GroupStatistics {
+	gg.groupsMutex.Lock()
+	defer gg.groupsMutex.Unlock()
 	if number >= len(gg.Groups) {
 		return GroupStatistics{}
 	}
